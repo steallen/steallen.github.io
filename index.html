@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mission Terminal</title>
+
+  <!-- xterm.js -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+
+  <style>
+    html, body { height: 100%; margin: 0; background: #0b0f14; }
+    #wrap { height: 100%; display: flex; align-items: stretch; }
+    #terminal { flex: 1; padding: 12px; }
+    .xterm-viewport { border-radius: 10px; }
+  </style>
+</head>
+
+<body>
+  <div id="wrap">
+    <div id="terminal"></div>
+  </div>
+
+  <script>
+    // ---------- "fake filesystem" (with directories) ----------
+    // Dotfiles are hidden unless: ls -a
+    // Students must find KEY PART 1 in a hidden file in ~,
+    // then cd into a folder and find KEY PART 2 in a hidden file there.
+    const TREE = {
+      "~": {
+        "readme.txt":
+          "Mission Terminal v2\n\n" +
+          "Goal: find the KEY.\n" +
+          "Hint: hidden files start with a dot.\n" +
+          "You may need: ls, ls -a, cat <file>, cd <dir>, pwd\n",
+        "notes.md": "- list everything\n- read files\n- check subfolders\n",
+        "clue.txt": "Agents don’t guess.\nAgents enumerate.\n",
+        "mission.log": "log: boot ok\nlog: user connected\nlog: audit ready\n",
+
+        // Hidden files (dotfiles) in ~
+        ".cache_hint":
+          "If you can read this, you're doing the right thing.\n" +
+          "Not the key.\n" +
+          "Keep reading hidden files.\n",
+        ".profile":
+          "Still not it.\n" +
+          "Try the other hidden files.\n",
+        ".handoff":
+          "KEY PART 1: POLAR-\n" +
+          "(Find the second part somewhere else.)\n",
+
+        // One level deep folder
+        "archives": {
+          "old.log": "old: nothing important\n",
+          ".index":
+            "Not the key.\n" +
+            "But you're close.\n" +
+            "Try reading every hidden file in this folder.\n",
+          ".vault": "KEY PART 2: AURORA\n"
+        }
+      }
+    };
+
+    // Current working directory (supports: ~ and ~/archives)
+    let CWD = "~";
+
+    // ---------- terminal setup ----------
+    const term = new Terminal({
+      cursorBlink: true,
+      fontSize: 15,
+      theme: { background: "#0b0f14" }
+    });
+
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(document.getElementById("terminal"));
+    fitAddon.fit();
+    window.addEventListener("resize", () => fitAddon.fit());
+
+    const PROMPT = () => `student@mission:${CWD}$ `;
+    let line = "";
+
+    function writeln(s = "") { term.write(s + "\r\n"); }
+    function write(s = "") { term.write(s); }
+
+    function getDir(path) {
+      if (path === "~") return TREE["~"];
+      const root = TREE["~"];
+
+      if (path.startsWith("~/")) {
+        const name = path.slice(2); // after "~/"
+        if (root[name] && typeof root[name] === "object") return root[name];
+      }
+      return null;
+    }
+
+    function currentDir() {
+      return getDir(CWD);
+    }
+
+    function listFiles(showAll = false) {
+      const dir = currentDir();
+      if (!dir) { writeln("ls: cannot access directory"); return; }
+
+      const names = Object.keys(dir).filter(name => showAll ? true : !name.startsWith("."));
+      writeln(names.join("  "));
+    }
+
+    function catFile(name) {
+      if (!name) { writeln("cat: missing file operand"); return; }
+
+      const dir = currentDir();
+      if (!dir) { writeln("cat: directory not found"); return; }
+
+      if (!(name in dir)) {
+        writeln(`cat: ${name}: No such file`);
+        return;
+      }
+
+      const node = dir[name];
+
+      if (typeof node === "object") {
+        writeln(`cat: ${name}: Is a directory`);
+        return;
+      }
+
+      const text = String(node);
+      write(text.replaceAll("\n", "\r\n"));
+      if (!text.endsWith("\n")) writeln();
+    }
+
+    function help() {
+      writeln("Available commands:");
+      writeln("  help            show this help");
+      writeln("  pwd             print working directory");
+      writeln("  ls              list files (hides dotfiles)");
+      writeln("  ls -a           list files (includes dotfiles)");
+      writeln("  cd <dir>        change directory (supports: cd archives, cd .., cd ~)");
+      writeln("  cat <file>      print a file");
+      writeln("  clear           clear screen");
+    }
+
+    function changeDir(target) {
+      if (target === "~") {
+        CWD = "~";
+        return;
+      }
+
+      if (target === "..") {
+        // Only one level deep supported
+        CWD = "~";
+        return;
+      }
+
+      // From root, allow cd into one folder if it exists
+      if (CWD === "~") {
+        const root = TREE["~"];
+        if (root[target] && typeof root[target] === "object") {
+          CWD = `~/${target}`;
+        } else {
+          writeln(`cd: ${target}: No such directory`);
+        }
+        return;
+      }
+
+      writeln("cd: only one level deep is supported (use cd .. or cd ~)");
+    }
+
+    function runCommand(raw) {
+      const input = raw.trim();
+      if (input === "") return;
+
+      const parts = input.split(/\s+/);
+      const cmd = parts[0];
+      const args = parts.slice(1);
+
+      switch (cmd) {
+        case "help":
+          help();
+          break;
+
+        case "pwd":
+          writeln(CWD);
+          break;
+
+        case "ls":
+          if (args.length === 0) listFiles(false);
+          else if (args.length === 1 && args[0] === "-a") listFiles(true);
+          else writeln("ls: unsupported option (try: ls or ls -a)");
+          break;
+
+        case "cd":
+          if (args.length !== 1) writeln("cd: usage: cd <dir>");
+          else changeDir(args[0]);
+          break;
+
+        case "cat":
+          catFile(args[0]);
+          break;
+
+        case "clear":
+          term.clear();
+          break;
+
+        default:
+          writeln(`${cmd}: command not found`);
+      }
+    }
+
+    // ---------- input handling ----------
+    function prompt() { write(PROMPT()); }
+
+    writeln("Mission Terminal");
+    writeln("Type 'help' to get started.");
+    writeln();
+    prompt();
+
+    term.onData((data) => {
+      const code = data.charCodeAt(0);
+
+      // Enter
+      if (data === "\r") {
+        writeln();
+        runCommand(line);
+        line = "";
+        prompt();
+        return;
+      }
+
+      // Backspace
+      if (code === 127) {
+        if (line.length > 0) {
+          line = line.slice(0, -1);
+          write("\b \b");
+        }
+        return;
+      }
+
+      // Ctrl+C
+      if (code === 3) {
+        writeln("^C");
+        line = "";
+        prompt();
+        return;
+      }
+
+      // Printable characters
+      if (data >= " " && data <= "~") {
+        line += data;
+        write(data);
+      }
+    });
+  </script>
+</body>
+</html>
